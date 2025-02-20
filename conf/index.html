@@ -1,1 +1,723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouAreInControl Chat</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.4.7/peerjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/libsodium-wrappers/0.5.4/sodium.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+    <div id="loading-screen" class="fixed inset-0 flex items-center justify-center bg-white dark:bg-gray-900">
+        <div class="text-2xl">Loading...</div>
+    </div>
+
+    <div id="app" class="min-h-screen hidden">
+        <div id="setup-screen" class="fixed inset-0 flex items-center justify-center bg-white dark:bg-gray-900">
+            <div class="p-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg max-w-md w-full">
+                <h2 class="text-2xl font-bold mb-4">Welcome to YouAreInControl Chat</h2>
+                <input type="text" id="display-name" placeholder="Enter your display name" class="w-full p-2 mb-4 border rounded dark:bg-gray-700 dark:border-gray-600">
+                <button id="start-btn" class="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600">Start Messaging</button>
+            </div>
+        </div>
+
+        <div id="main-screen" class="hidden h-screen flex">
+            <div class="w-1/4 border-r border-gray-200 dark:border-gray-700 p-4">
+                <div class="mb-4">
+                    <h3 class="text-lg font-bold mb-2">Your ID</h3>
+                    <div id="qr-code" class="mb-2"></div>
+                    <p id="user-id" class="text-sm break-all"></p>
+                </div>
+                <div class="mb-4">
+                    <h3 class="text-lg font-bold mb-2">Add Contact</h3>
+                    <div class="space-y-2">
+                        <input type="text" id="peer-id" placeholder="Enter peer ID" class="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600">
+                        <button id="connect-btn" class="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600">Connect</button>
+                        <button id="scan-qr-btn" class="w-full bg-green-500 text-white p-2 rounded hover:bg-green-600">Scan QR Code</button>
+                    </div>
+                </div>
+                <div>
+                    <h3 class="text-lg font-bold mb-2">Contacts</h3>
+                    <div id="contact-list" class="space-y-2"></div>
+                </div>
+            </div>
+
+            <div class="flex-1 flex flex-col">
+                <div id="chat-header" class="p-4 border-b border-gray-200 dark:border-gray-700">
+                    <div class="flex justify-between items-center">
+                        <h2 id="chat-title" class="text-xl font-bold">Select a contact</h2>
+                        <button id="video-call-btn" class="hidden px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600">
+                            📹 Video Call
+                        </button>
+                    </div>
+                </div>
+                <div id="chat-messages" class="flex-1 p-4 space-y-4 overflow-y-auto"></div>
+                <div id="chat-input" class="p-4 border-t border-gray-200 dark:border-gray-700">
+                    <div class="flex space-x-2">
+                        <input type="text" id="message-input" placeholder="Type a message" class="flex-1 p-2 border rounded dark:bg-gray-700 dark:border-gray-600">
+                        <button id="attach-btn" class="px-4 py-2 bg-gray-200 dark:bg-gray-700 rounded hover:bg-gray-300 dark:hover:bg-gray-600">📎</button>
+                        <button id="send-btn" class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">Send</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- QR Scanner Modal -->
+        <div id="qr-scanner-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+            <div class="bg-white dark:bg-gray-800 p-4 rounded-lg max-w-lg w-full">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-bold">Scan QR Code</h3>
+                    <button id="close-scanner-btn" class="text-2xl">&times;</button>
+                </div>
+                <div id="qr-reader" class="mb-4"></div>
+            </div>
+        </div>
+
+        <!-- Video Call Modal -->
+        <div id="video-call-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+            <div class="bg-white dark:bg-gray-800 p-4 rounded-lg max-w-4xl w-full">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-bold">Video Call</h3>
+                    <button id="end-call-btn" class="bg-red-500 text-white px-4 py-2 rounded">End Call</button>
+                </div>
+                <div class="flex space-x-4">
+                    <video id="local-video" class="w-1/2 bg-black" autoplay muted></video>
+                    <video id="remote-video" class="w-1/2 bg-black" autoplay></video>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+class CryptoService {
+    constructor() {
+        this.keyPair = null;
+        this.publicKey = null;
+        this.privateKey = null;
+    }
+
+    async initialize() {
+        await sodium.ready;
+        const storedKeyPair = localStorage.getItem('keyPair');
+        
+        if (storedKeyPair) {
+            this.keyPair = JSON.parse(storedKeyPair);
+            this.publicKey = sodium.from_base64(this.keyPair.publicKey);
+            this.privateKey = sodium.from_base64(this.keyPair.privateKey);
+        } else {
+            const keyPair = sodium.crypto_box_keypair();
+            this.publicKey = keyPair.publicKey;
+            this.privateKey = keyPair.privateKey;
+            
+            this.keyPair = {
+                publicKey: sodium.to_base64(this.publicKey),
+                privateKey: sodium.to_base64(this.privateKey)
+            };
+            
+            localStorage.setItem('keyPair', JSON.stringify(this.keyPair));
+        }
+    }
+
+    async encrypt(message, recipientPublicKey) {
+        const nonce = sodium.randombytes_buf(sodium.crypto_box_NONCEBYTES);
+        const encryptedMessage = sodium.crypto_box_easy(
+            sodium.from_string(message),
+            nonce,
+            sodium.from_base64(recipientPublicKey),
+            this.privateKey
+        );
+        
+        return {
+            encrypted: sodium.to_base64(encryptedMessage),
+            nonce: sodium.to_base64(nonce)
+        };
+    }
+
+    async decrypt(encryptedData, senderPublicKey) {
+        const decrypted = sodium.crypto_box_open_easy(
+            sodium.from_base64(encryptedData.encrypted),
+            sodium.from_base64(encryptedData.nonce),
+            sodium.from_base64(senderPublicKey),
+            this.privateKey
+        );
+        
+        return sodium.to_string(decrypted);
+    }
+
+    async encryptFile(file) {
+        const arrayBuffer = await file.arrayBuffer();
+        const nonce = sodium.randombytes_buf(sodium.crypto_secretbox_NONCEBYTES);
+        const key = sodium.randombytes_buf(sodium.crypto_secretbox_KEYBYTES);
+        
+        const encrypted = sodium.crypto_secretbox_easy(
+            new Uint8Array(arrayBuffer),
+            nonce,
+            key
+        );
+        
+        return {
+            encrypted: sodium.to_base64(encrypted),
+            nonce: sodium.to_base64(nonce),
+            key: sodium.to_base64(key),
+            filename: file.name,
+            type: file.type
+        };
+    }
+
+    async decryptFile(encryptedData) {
+        const decrypted = sodium.crypto_secretbox_open_easy(
+            sodium.from_base64(encryptedData.encrypted),
+            sodium.from_base64(encryptedData.nonce),
+            sodium.from_base64(encryptedData.key)
+        );
+        
+        return new File([decrypted], encryptedData.filename, { type: encryptedData.type });
+    }
+}
+
+class StorageService {
+    constructor() {
+        this.db = null;
+    }
+
+    async initialize() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open('youareincontrol-chat', 1);
+            
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                this.db = request.result;
+                resolve();
+            };
+            
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains('messages')) {
+                    db.createObjectStore('messages', { keyPath: 'id', autoIncrement: true });
+                }
+            };
+        });
+    }
+
+    async saveMessage(message) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['messages'], 'readwrite');
+            const store = transaction.objectStore('messages');
+            const request = store.add(message);
+            
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async getMessages(peerId) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['messages'], 'readonly');
+            const store = transaction.objectStore('messages');
+            const request = store.getAll();
+            
+            request.onsuccess = () => {
+                const messages = request.result.filter(m => 
+                    m.sender === peerId || m.recipient === peerId
+                );
+                resolve(messages);
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+}
+class P2PService {
+    constructor() {
+        this.peer = null;
+        this.connections = new Map();
+        this.streams = new Map();
+        this.callbacks = {
+            onMessage: null,
+            onConnection: null,
+            onDisconnection: null,
+            onCall: null,
+            onTyping: null
+        };
+        this.handleConnection = this.handleConnection.bind(this);
+        this.handleIncomingCall = this.handleIncomingCall.bind(this);
+    }
+
+    async initialize() {
+        const userId = localStorage.getItem('userId') || this.generateUserId();
+        localStorage.setItem('userId', userId);
+        
+        return new Promise((resolve, reject) => {
+            this.peer = new Peer(userId);
+            
+            this.peer.on('open', () => {
+                this.setupPeerEvents();
+                resolve(userId);
+            });
+            
+            this.peer.on('error', reject);
+        });
+    }
+
+    setupPeerEvents() {
+        this.peer.on('connection', this.handleConnection);
+        this.peer.on('call', this.handleIncomingCall);
+    }
+
+    generateUserId() {
+        return `user-${Math.random().toString(36).substr(2, 9)}`;
+    }
+
+    async handleConnection(conn) {
+        await this.setupConnection(conn);
+    }
+
+    async connect(peerId) {
+        if (this.connections.has(peerId)) return;
+        
+        const conn = this.peer.connect(peerId, {
+            reliable: true,
+            serialization: 'json',
+            metadata: {
+                publicKey: cryptoService.keyPair.publicKey
+            }
+        });
+        
+        await this.setupConnection(conn);
+        return conn;
+    }
+
+    async setupConnection(conn) {
+        return new Promise((resolve) => {
+            conn.on('open', () => {
+                // Exchange public keys
+                conn.send({
+                    type: 'key-exchange',
+                    publicKey: cryptoService.keyPair.publicKey
+                });
+                
+                this.connections.set(conn.peer, conn);
+                this.callbacks.onConnection?.(conn.peer);
+                resolve();
+            });
+
+            conn.on('data', async (data) => {
+                if (data.type === 'key-exchange') {
+                    conn.metadata = { publicKey: data.publicKey };
+                } else if (data.type === 'message') {
+                    const decrypted = await cryptoService.decrypt(
+                        data.content,
+                        data.senderPublicKey
+                    );
+                    this.callbacks.onMessage?.({
+                        sender: conn.peer,
+                        content: decrypted,
+                        timestamp: data.timestamp
+                    });
+                    await storageService.saveMessage({
+                        sender: conn.peer,
+                        recipient: this.peer.id,
+                        content: decrypted,
+                        timestamp: data.timestamp
+                    });
+                } else if (data.type === 'typing') {
+                    this.callbacks.onTyping?.({
+                        sender: conn.peer,
+                        isTyping: data.isTyping
+                    });
+                }
+            });
+
+            conn.on('close', () => {
+                this.connections.delete(conn.peer);
+                this.callbacks.onDisconnection?.(conn.peer);
+            });
+        });
+    }
+
+    async sendMessage(peerId, message) {
+        const conn = this.connections.get(peerId);
+        if (!conn || !conn.metadata?.publicKey) return false;
+        
+        const encrypted = await cryptoService.encrypt(
+            message,
+            conn.metadata.publicKey
+        );
+        
+        conn.send({
+            type: 'message',
+            content: encrypted,
+            senderPublicKey: cryptoService.keyPair.publicKey,
+            timestamp: Date.now()
+        });
+        
+        await storageService.saveMessage({
+            sender: 'me',
+            recipient: peerId,
+            content: message,
+            timestamp: Date.now()
+        });
+        
+        return true;
+    }
+
+    async startCall(peerId) {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: true
+        });
+        
+        localStream = stream;
+        document.getElementById('local-video').srcObject = stream;
+        
+        const call = this.peer.call(peerId, stream);
+        this.setupCall(call);
+        return call;
+    }
+
+    async handleIncomingCall(call) {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: true
+            });
+            
+            localStream = stream;
+            document.getElementById('local-video').srcObject = stream;
+            
+            call.answer(stream);
+            this.setupCall(call);
+            
+            document.getElementById('video-call-modal').classList.remove('hidden');
+        } catch (error) {
+            console.error('Failed to get user media:', error);
+            alert('Failed to access camera/microphone');
+        }
+    }
+
+    setupCall(call) {
+        call.on('stream', (remoteStream) => {
+            this.streams.set(call.peer, remoteStream);
+            document.getElementById('remote-video').srcObject = remoteStream;
+            document.getElementById('video-call-modal').classList.remove('hidden');
+            this.callbacks.onCall?.({
+                peer: call.peer,
+                stream: remoteStream
+            });
+        });
+
+        call.on('close', () => {
+            this.streams.delete(call.peer);
+            document.getElementById('video-call-modal').classList.add('hidden');
+        });
+    }
+}
+
+function setupQRScanner() {
+    const html5QrcodeScanner = new Html5Qrcode("qr-reader");
+    
+    document.getElementById('scan-qr-btn').onclick = () => {
+        document.getElementById('qr-scanner-modal').classList.remove('hidden');
+        
+        html5QrcodeScanner.start(
+            { facingMode: "environment" },
+            { fps: 10, qrbox: 250 },
+            async (decodedText) => {
+                await html5QrcodeScanner.stop();
+                document.getElementById('qr-scanner-modal').classList.add('hidden');
+                document.getElementById('peer-id').value = decodedText;
+                document.getElementById('connect-btn').click();
+            },
+            (error) => {
+                console.log(error);
+            }
+        );
+    };
+    
+    document.getElementById('close-scanner-btn').onclick = async () => {
+        await html5QrcodeScanner.stop();
+        document.getElementById('qr-scanner-modal').classList.add('hidden');
+    };
+}
+
+function setupVideoCallUI() {
+    document.getElementById('video-call-btn').onclick = () => {
+        if (currentPeer) {
+            p2pService.startCall(currentPeer);
+        }
+    };
+    
+    document.getElementById('end-call-btn').onclick = () => {
+        if (localStream) {
+            localStream.getTracks().forEach(track => track.stop());
+        }
+        document.getElementById('video-call-modal').classList.add('hidden');
+        document.getElementById('local-video').srcObject = null;
+        document.getElementById('remote-video').srcObject = null;
+    };
+}
+
+// Modified selectPeer function to show video call button
+function selectPeer(peerId) {
+    currentPeer = peerId;
+    document.getElementById('chat-title').textContent = `Chat with ${peerId}`;
+    document.getElementById('chat-messages').innerHTML = '';
+    document.getElementById('video-call-btn').classList.remove('hidden');
+    loadMessages(peerId);
+}
+
+// Add to initialize function
+async function initialize() {
+    try {
+        await sodium.ready;
+        await cryptoService.initialize();
+        await storageService.initialize();
+        const userId = await p2pService.initialize();
+
+        document.getElementById('user-id').textContent = userId;
+        new QRCode(document.getElementById('qr-code'), userId);
+
+        const displayName = localStorage.getItem('displayName');
+        if (displayName) {
+            document.getElementById('display-name').value = displayName;
+        }
+
+        document.getElementById('loading-screen').classList.add('hidden');
+        document.getElementById('app').classList.remove('hidden');
+
+        setupEventListeners();
+        setupCallbacks();
+        setupQRScanner();
+        setupVideoCallUI();
+    } catch (error) {
+        console.error('Initialization error:', error);
+        alert('Failed to initialize the application. Please refresh and try again.');
+    }
+}
+
+function setupEventListeners() {
+    document.getElementById('start-btn').onclick = () => {
+        const displayName = document.getElementById('display-name').value.trim();
+        if (displayName) {
+            localStorage.setItem('displayName', displayName);
+            document.getElementById('setup-screen').classList.add('hidden');
+            document.getElementById('main-screen').classList.remove('hidden');
+        } else {
+            alert('Please enter a display name');
+        }
+    };
+
+    document.getElementById('connect-btn').onclick = async () => {
+        const peerId = document.getElementById('peer-id').value.trim();
+        if (peerId) {
+            try {
+                await p2pService.connect(peerId);
+                document.getElementById('peer-id').value = '';
+            } catch (error) {
+                console.error('Connection error:', error);
+                alert('Failed to connect to peer. Please check the ID and try again.');
+            }
+        }
+    };
+
+    document.getElementById('send-btn').onclick = sendMessage;
+
+    document.getElementById('message-input').onkeyup = (event) => {
+        if (event.key === 'Enter' && !event.shiftKey) {
+            sendMessage();
+        }
+    };
+
+    document.getElementById('message-input').oninput = () => {
+        if (currentPeer) {
+            p2pService.sendTypingIndicator(currentPeer, true);
+            clearTimeout(window.typingTimeout);
+            window.typingTimeout = setTimeout(() => {
+                p2pService.sendTypingIndicator(currentPeer, false);
+            }, 1000);
+        }
+    };
+
+    document.getElementById('attach-btn').onclick = async () => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.onchange = async () => {
+            const file = input.files[0];
+            if (file && currentPeer) {
+                try {
+                    const encryptedFile = await cryptoService.encryptFile(file);
+                    await p2pService.sendMessage(currentPeer, JSON.stringify({
+                        type: 'file',
+                        data: encryptedFile
+                    }));
+                    addFileToChat('outgoing', file);
+                } catch (error) {
+                    console.error('File sending error:', error);
+                    alert('Failed to send file. Please try again.');
+                }
+            }
+        };
+        input.click();
+    };
+}
+
+function setupCallbacks() {
+    p2pService.callbacks.onConnection = (peerId) => {
+        const contactList = document.getElementById('contact-list');
+        const existingContact = document.querySelector(`[data-peer-id="${peerId}"]`);
+        
+        if (!existingContact) {
+            const contactElement = document.createElement('div');
+            contactElement.className = 'p-2 bg-gray-200 dark:bg-gray-700 rounded cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-600';
+            contactElement.textContent = peerId;
+            contactElement.dataset.peerId = peerId;
+            contactElement.onclick = () => selectPeer(peerId);
+            contactList.appendChild(contactElement);
+        }
+    };
+
+    p2pService.callbacks.onDisconnection = (peerId) => {
+        const contactElement = document.querySelector(`[data-peer-id="${peerId}"]`);
+        if (contactElement) {
+            contactElement.remove();
+        }
+        if (currentPeer === peerId) {
+            currentPeer = null;
+            document.getElementById('chat-title').textContent = 'Select a contact';
+            document.getElementById('video-call-btn').classList.add('hidden');
+        }
+    };
+
+    p2pService.callbacks.onMessage = async (message) => {
+        if (message.sender === currentPeer) {
+            try {
+                const parsedContent = JSON.parse(message.content);
+                if (parsedContent.type === 'file') {
+                    const decryptedFile = await cryptoService.decryptFile(parsedContent.data);
+                    addFileToChat('incoming', decryptedFile);
+                } else {
+                    addMessageToChat('incoming', message.content);
+                }
+            } catch {
+                addMessageToChat('incoming', message.content);
+            }
+        }
+    };
+
+    p2pService.callbacks.onTyping = ({ sender, isTyping }) => {
+        if (sender === currentPeer) {
+            const title = document.getElementById('chat-title');
+            title.textContent = isTyping ? 
+                `${sender} is typing...` : 
+                `Chat with ${sender}`;
+        }
+    };
+
+    p2pService.callbacks.onCall = () => {
+        const videoCallModal = document.getElementById('video-call-modal');
+        if (!videoCallModal.classList.contains('hidden')) {
+            document.getElementById('chat-messages').classList.add('hidden');
+        }
+    };
+}
+
+async function loadMessages(peerId) {
+    const messages = await storageService.getMessages(peerId);
+    messages.sort((a, b) => a.timestamp - b.timestamp).forEach(message => {
+        const type = message.sender === 'me' ? 'outgoing' : 'incoming';
+        try {
+            const parsedContent = JSON.parse(message.content);
+            if (parsedContent.type === 'file') {
+                addFileToChat(type, parsedContent.data);
+            } else {
+                addMessageToChat(type, message.content);
+            }
+        } catch {
+            addMessageToChat(type, message.content);
+        }
+    });
+}
+
+function sendMessage() {
+    const input = document.getElementById('message-input');
+    const message = input.value.trim();
+    
+    if (message && currentPeer) {
+        p2pService.sendMessage(currentPeer, message)
+            .then(success => {
+                if (success) {
+                    addMessageToChat('outgoing', message);
+                    input.value = '';
+                } else {
+                    alert('Failed to send message. Connection not established.');
+                }
+            })
+            .catch(error => {
+                console.error('Message sending error:', error);
+                alert('Failed to send message. Please try again.');
+            });
+    }
+}
+
+function addMessageToChat(type, content) {
+    const messagesContainer = document.getElementById('chat-messages');
+    const messageElement = document.createElement('div');
+    messageElement.className = `flex ${type === 'outgoing' ? 'justify-end' : 'justify-start'}`;
+    
+    const bubble = document.createElement('div');
+    bubble.className = `max-w-xs p-3 rounded-lg ${
+        type === 'outgoing' 
+            ? 'bg-blue-500 text-white' 
+            : 'bg-gray-200 dark:bg-gray-700'
+    }`;
+    bubble.textContent = content;
+    
+    messageElement.appendChild(bubble);
+    messagesContainer.appendChild(messageElement);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
+function addFileToChat(type, file) {
+    const messagesContainer = document.getElementById('chat-messages');
+    const messageElement = document.createElement('div');
+    messageElement.className = `flex ${type === 'outgoing' ? 'justify-end' : 'justify-start'}`;
+    
+    const bubble = document.createElement('div');
+    bubble.className = `max-w-xs p-3 rounded-lg ${
+        type === 'outgoing' 
+            ? 'bg-blue-500 text-white' 
+            : 'bg-gray-200 dark:bg-gray-700'
+    }`;
+
+    if (file.type?.startsWith('image/')) {
+        const img = document.createElement('img');
+        img.src = URL.createObjectURL(file);
+        img.className = 'max-w-full rounded';
+        bubble.appendChild(img);
+    } else {
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(file);
+        link.download = file.name;
+        link.textContent = `📎 ${file.name}`;
+        link.className = 'underline';
+        bubble.appendChild(link);
+    }
+    
+    messageElement.appendChild(bubble);
+    messagesContainer.appendChild(messageElement);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
+window.addEventListener('load', initialize);
+
+const cryptoService = new CryptoService();
+const storageService = new StorageService();
+const p2pService = new P2PService();
+let currentPeer = null;
+let localStream = null;
+    </script>
+</body>
+</html>
 
